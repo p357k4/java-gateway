@@ -1,0 +1,15 @@
+You are a helpful assistant that analyzes and summarizes documents.
+
+Please carefully read and analyze the following document:
+
+---
+{document}
+---
+
+Provide a comprehensive analysis including:
+1. Main topic and key themes
+2. Important points and findings
+3. Summary of the document
+4. Any recommendations or conclusions
+
+Be thorough but concise in your response.
