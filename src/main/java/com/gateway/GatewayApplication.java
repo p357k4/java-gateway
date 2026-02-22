@@ -64,13 +64,14 @@ public class GatewayApplication {
     }
 
     private static ApplicationConfig loadConfiguration() {
+        final boolean useEmulator = Config.useGeminiEmulator();
         return new ApplicationConfig(
                 Config.getServerPort(),
                 Config.getPromptFilePath(),
                 Config.getThreadPoolSize(),
-                Config.useGeminiEmulator(),
-                Config.getGeminiApiKey(),
-                Config.getGeminiApiEndpoint());
+                useEmulator,
+                useEmulator ? null : Config.getGeminiApiKey(),
+                useEmulator ? null : Config.getGeminiApiEndpoint());
     }
 
     private static GeminiClient createGeminiClient(ApplicationConfig config) {
@@ -111,7 +112,8 @@ public class GatewayApplication {
             String promptFilePath,
             int threadPoolSize,
             boolean useEmulator,
-            String apiKey,
-            String apiEndpoint) {
+            String apiKey, // null if using emulator
+            String apiEndpoint // null if using emulator
+    ) {
     }
 }
