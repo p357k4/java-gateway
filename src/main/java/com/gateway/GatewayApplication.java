@@ -11,80 +11,107 @@ import io.netty.bootstrap.ServerBootstrap;
 import io.netty.channel.EventLoopGroup;
 import io.netty.channel.nio.NioEventLoopGroup;
 import io.netty.channel.socket.nio.NioServerSocketChannel;
+import java.util.logging.Logger;
+import java.util.logging.Level;
 
 /**
  * Main entry point for the Gemini Gateway application.
  * Starts an HTTP server that processes documents with Gemini API.
  */
 public class GatewayApplication {
-    
+
+    private static final Logger LOGGER = Logger.getLogger(GatewayApplication.class.getName());
+
     public static void main(String[] args) {
         try {
-            // Load configuration
-            final var port = Config.getServerPort();
-            final var promptFilePath = Config.getPromptFilePath();
-            final var threadPoolSize = Config.getThreadPoolSize();
-            final var useEmulator = Config.useGeminiEmulator();
-
-            System.out.println("Starting Gemini Gateway on port " + port);
-            System.out.println("Prompt file: " + promptFilePath);
-
-            // Initialize services
-            final var promptProvider = new FilePromptProvider(promptFilePath);
-            
-            // Create Gemini client (use emulator or real API)
-            final GeminiClient geminiClient;
-            if (useEmulator) {
-                System.out.println("Using Gemini EMULATOR mode (for testing/development)");
-                geminiClient = new EmulatorGeminiClient();
-            } else {
-                final var apiKey = Config.getGeminiApiKey();
-                final var apiEndpoint = Config.getGeminiApiEndpoint();
-                System.out.println("Using real Gemini API");
-                System.out.println("API endpoint: " + apiEndpoint);
-                geminiClient = new HttpGeminiClient(apiKey, apiEndpoint);
-            }
-            
-            final var documentProcessor = new GeminiDocumentProcessor(
-                promptProvider,
-                geminiClient
-            );
-
-            // Create Netty event loop groups
-            final var bossGroup = new NioEventLoopGroup(1);
-            final var workerGroup = new NioEventLoopGroup(threadPoolSize);
-
-            try {
-                // Create server bootstrap
-                final var bootstrap = new ServerBootstrap()
-                    .group(bossGroup, workerGroup)
-                    .channel(NioServerSocketChannel.class)
-                    .childHandler(new RequestHandlerInitializer(documentProcessor));
-
-                // Bind to port
-                final var future = bootstrap.bind(port).sync();
-
-                // Add shutdown hook for graceful shutdown
-                Runtime.getRuntime().addShutdownHook(new Thread(() -> {
-                    System.out.println("\nShutting down server...");
-                    bossGroup.shutdownGracefully();
-                    workerGroup.shutdownGracefully();
-                    System.out.println("Server stopped.");
-                }));
-
-                System.out.println("Server started successfully!");
-                System.out.println("POST http://localhost:" + port + "/process");
-
-                // Wait until server socket is closed
-                future.channel().closeFuture().sync();
-            } finally {
-                bossGroup.shutdownGracefully();
-                workerGroup.shutdownGracefully();
-            }
+            startServer();
         } catch (Exception e) {
-            System.err.println("Failed to start application: " + e.getMessage());
-            e.printStackTrace();
+            LOGGER.log(Level.SEVERE, "Failed to start application", e);
             System.exit(1);
         }
+    }
+
+    private static void startServer() throws InterruptedException {
+        final var config = loadConfiguration();
+
+        LOGGER.info(() -> "Starting Gemini Gateway on port " + config.port());
+        LOGGER.info(() -> "Prompt file: " + config.promptFilePath());
+
+        final var promptProvider = new FilePromptProvider(config.promptFilePath());
+        final var geminiClient = createGeminiClient(config);
+        final var documentProcessor = new GeminiDocumentProcessor(promptProvider, geminiClient);
+
+        final var bossGroup = new NioEventLoopGroup(1);
+        final var workerGroup = new NioEventLoopGroup(config.threadPoolSize());
+
+        try {
+            final var future = new ServerBootstrap()
+                    .group(bossGroup, workerGroup)
+                    .channel(NioServerSocketChannel.class)
+                    .childHandler(new RequestHandlerInitializer(documentProcessor))
+                    .bind(config.port())
+                    .sync();
+
+            registerShutdownHook(bossGroup, workerGroup);
+
+            LOGGER.info("Server started successfully!");
+            LOGGER.info(() -> "POST http://localhost:" + config.port() + "/process");
+
+            future.channel().closeFuture().sync();
+        } finally {
+            shutdownEventGroups(bossGroup, workerGroup);
+        }
+    }
+
+    private static ApplicationConfig loadConfiguration() {
+        return new ApplicationConfig(
+                Config.getServerPort(),
+                Config.getPromptFilePath(),
+                Config.getThreadPoolSize(),
+                Config.useGeminiEmulator(),
+                Config.getGeminiApiKey(),
+                Config.getGeminiApiEndpoint());
+    }
+
+    private static GeminiClient createGeminiClient(ApplicationConfig config) {
+        return config.useEmulator()
+                ? createEmulatorClient()
+                : createHttpClient(config);
+    }
+
+    private static GeminiClient createEmulatorClient() {
+        LOGGER.info("Using Gemini EMULATOR mode (for testing/development)");
+        return new EmulatorGeminiClient();
+    }
+
+    private static GeminiClient createHttpClient(ApplicationConfig config) {
+        LOGGER.info("Using real Gemini API");
+        LOGGER.info(() -> "API endpoint: " + config.apiEndpoint());
+        return new HttpGeminiClient(config.apiKey(), config.apiEndpoint());
+    }
+
+    private static void registerShutdownHook(EventLoopGroup bossGroup, EventLoopGroup workerGroup) {
+        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+            LOGGER.info("Shutting down server...");
+            shutdownEventGroups(bossGroup, workerGroup);
+            LOGGER.info("Server stopped.");
+        }, "ShutdownHook"));
+    }
+
+    private static void shutdownEventGroups(EventLoopGroup bossGroup, EventLoopGroup workerGroup) {
+        bossGroup.shutdownGracefully();
+        workerGroup.shutdownGracefully();
+    }
+
+    /**
+     * Immutable configuration holder for the application
+     */
+    private record ApplicationConfig(
+            int port,
+            String promptFilePath,
+            int threadPoolSize,
+            boolean useEmulator,
+            String apiKey,
+            String apiEndpoint) {
     }
 }

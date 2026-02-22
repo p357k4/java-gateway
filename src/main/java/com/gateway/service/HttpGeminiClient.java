@@ -1,6 +1,7 @@
 package com.gateway.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.gateway.api.dto.GeminiRequest;
 import com.gateway.api.dto.GeminiResponse;
 import com.gateway.exception.GatewayException;
 import java.net.http.HttpClient;
@@ -12,7 +13,7 @@ import java.net.URI;
  * HTTP-based client for communicating with Gemini API
  */
 public class HttpGeminiClient implements GeminiClient {
-    
+
     private final String apiKey;
     private final String apiEndpoint;
     private final HttpClient httpClient;
@@ -26,35 +27,32 @@ public class HttpGeminiClient implements GeminiClient {
     }
 
     @Override
-    public GeminiResponse sendRequest(String prompt, String modelName) throws GatewayException {
+    public GeminiResponse sendRequest(GeminiRequest request) throws GatewayException {
         try {
             // Build Gemini request body
-            final var requestBody = buildRequestBody(prompt);
-            
+            final var requestBody = buildRequestBody(request);
+
             // Create HTTP request
-            final var request = HttpRequest.newBuilder()
-                .uri(new URI(apiEndpoint + "?key=" + apiKey))
-                .header("Content-Type", "application/json")
-                .POST(HttpRequest.BodyPublishers.ofString(requestBody))
-                .build();
+            final var httpRequest = HttpRequest.newBuilder()
+                    .uri(new URI(apiEndpoint + "?key=" + apiKey))
+                    .header("Content-Type", "application/json")
+                    .POST(HttpRequest.BodyPublishers.ofString(requestBody))
+                    .build();
 
             // Send request and handle response
             final var response = httpClient.send(
-                request,
-                HttpResponse.BodyHandlers.ofString()
-            );
+                    httpRequest,
+                    HttpResponse.BodyHandlers.ofString());
 
             if (response.statusCode() != 200) {
                 throw new GatewayException(
-                    "Gemini API returned status " + response.statusCode() + ": " + response.body()
-                );
+                        "Gemini API returned status " + response.statusCode() + ": " + response.body());
             }
 
             // Parse response
             final var geminiResponse = objectMapper.readValue(
-                response.body(),
-                GeminiResponse.class
-            );
+                    response.body(),
+                    GeminiResponse.class);
 
             // Validate response
             if (geminiResponse.candidates() == null || geminiResponse.candidates().isEmpty()) {
@@ -72,11 +70,11 @@ public class HttpGeminiClient implements GeminiClient {
     /**
      * Builds the JSON request body for Gemini API
      */
-    private String buildRequestBody(String prompt) throws Exception {
+    private String buildRequestBody(GeminiRequest request) throws Exception {
         final var jsonRequest = String.format(
-            "{\"contents\":[{\"role\":\"user\",\"parts\":[{\"text\":\"%s\"}]}]}",
-            escapeJson(prompt)
-        );
+                "{\"systemInstruction\":{\"parts\":[{\"text\":\"%s\"}]},\"contents\":[{\"role\":\"user\",\"parts\":[{\"text\":\"%s\"}]}]}",
+                escapeJson(request.systemInstruction()),
+                escapeJson(request.document()));
         return jsonRequest;
     }
 
@@ -85,10 +83,10 @@ public class HttpGeminiClient implements GeminiClient {
      */
     private String escapeJson(String text) {
         return text
-            .replace("\\", "\\\\")
-            .replace("\"", "\\\"")
-            .replace("\n", "\\n")
-            .replace("\r", "\\r")
-            .replace("\t", "\\t");
+                .replace("\\", "\\\\")
+                .replace("\"", "\\\"")
+                .replace("\n", "\\n")
+                .replace("\r", "\\r")
+                .replace("\t", "\\t");
     }
 }

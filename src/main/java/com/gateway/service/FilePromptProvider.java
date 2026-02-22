@@ -9,7 +9,7 @@ import java.nio.file.Paths;
  * Loads prompts from a file and substitutes document placeholders
  */
 public class FilePromptProvider implements PromptProvider {
-    
+
     private final String filePath;
     private String cachedTemplate;
 
@@ -18,20 +18,19 @@ public class FilePromptProvider implements PromptProvider {
     }
 
     @Override
-    public String getPrompt(String document) throws GatewayException {
+    public String getPrompt() throws GatewayException {
         try {
             // Load template on first use, then cache it
             if (cachedTemplate == null) {
                 cachedTemplate = Files.readString(Paths.get(filePath));
             }
-            
-            // Replace {document} placeholder with actual document
-            return cachedTemplate.replace("{document}", document);
+
+            // Return template as-is without placeholder substitution
+            return cachedTemplate;
         } catch (IOException e) {
             throw new GatewayException(
-                "Failed to load prompt template from: " + filePath,
-                e
-            );
+                    "Failed to load prompt template from: " + filePath,
+                    e);
         }
     }
 }
