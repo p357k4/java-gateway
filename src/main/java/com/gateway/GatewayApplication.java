@@ -31,7 +31,7 @@ public class GatewayApplication {
         }
     }
 
-    private static void startServer() throws InterruptedException {
+    private static void startServer() {
         final var config = loadConfiguration();
 
         LOGGER.info(() -> "Starting Gemini Gateway on port " + config.port());
@@ -50,14 +50,14 @@ public class GatewayApplication {
                     .channel(NioServerSocketChannel.class)
                     .childHandler(new RequestHandlerInitializer(documentProcessor))
                     .bind(config.port())
-                    .sync();
+                    .syncUninterruptibly();
 
             registerShutdownHook(bossGroup, workerGroup);
 
             LOGGER.info("Server started successfully!");
             LOGGER.info(() -> "POST http://localhost:" + config.port() + "/process");
 
-            future.channel().closeFuture().sync();
+            future.channel().closeFuture().syncUninterruptibly();
         } finally {
             shutdownEventGroups(bossGroup, workerGroup);
         }

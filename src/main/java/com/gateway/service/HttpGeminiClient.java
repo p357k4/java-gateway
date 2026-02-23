@@ -27,7 +27,7 @@ public class HttpGeminiClient implements GeminiClient {
     }
 
     @Override
-    public GeminiResponse sendRequest(GeminiRequest request) throws GatewayException {
+    public GeminiResponse sendRequest(GeminiRequest request) {
         try {
             // Build Gemini request body
             final var requestBody = buildRequestBody(request);
@@ -70,7 +70,7 @@ public class HttpGeminiClient implements GeminiClient {
     /**
      * Builds the JSON request body for Gemini API
      */
-    private String buildRequestBody(GeminiRequest request) throws Exception {
+    private String buildRequestBody(GeminiRequest request) {
         final var jsonRequest = String.format(
                 "{\"systemInstruction\":{\"parts\":[{\"text\":\"%s\"}]},\"contents\":[{\"role\":\"user\",\"parts\":[{\"text\":\"%s\"}]}]}",
                 escapeJson(request.systemInstruction()),

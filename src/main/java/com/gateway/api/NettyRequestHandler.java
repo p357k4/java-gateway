@@ -2,6 +2,7 @@ package com.gateway.api;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.gateway.api.dto.ProcessRequest;
+import com.gateway.api.dto.ErrorResponse;
 import com.gateway.exception.GatewayException;
 import com.gateway.processor.DocumentProcessor;
 import io.netty.buffer.Unpooled;
@@ -24,7 +25,7 @@ public class NettyRequestHandler extends ChannelInboundHandlerAdapter {
     }
 
     @Override
-    public void channelRead(ChannelHandlerContext ctx, Object msg) throws Exception {
+    public void channelRead(ChannelHandlerContext ctx, Object msg) {
         if (msg instanceof FullHttpRequest) {
             handleRequest(ctx, (FullHttpRequest) msg);
         } else {
@@ -32,17 +33,17 @@ public class NettyRequestHandler extends ChannelInboundHandlerAdapter {
         }
     }
 
-    private void handleRequest(ChannelHandlerContext ctx, FullHttpRequest request) throws Exception {
+    private void handleRequest(ChannelHandlerContext ctx, FullHttpRequest request) {
         try {
             // Only accept POST requests
             if (request.method() != HttpMethod.POST) {
-                sendResponse(ctx, 405, "{\"error\":\"Method not allowed. Use POST.\"}");
+                sendErrorResponse(ctx, 405, "Method not allowed. Use POST.");
                 return;
             }
 
             // Only accept /process path
             if (!request.uri().equals("/process")) {
-                sendResponse(ctx, 404, "{\"error\":\"Path not found. Use POST /process\"}");
+                sendErrorResponse(ctx, 404, "Path not found. Use POST /process");
                 return;
             }
 
@@ -51,7 +52,7 @@ public class NettyRequestHandler extends ChannelInboundHandlerAdapter {
             final var processRequest = objectMapper.readValue(content, ProcessRequest.class);
 
             if (processRequest == null || processRequest.document() == null) {
-                sendResponse(ctx, 400, "{\"error\":\"Invalid request. 'document' field is required.\"}");
+                sendErrorResponse(ctx, 400, "Invalid request. 'document' field is required.");
                 return;
             }
 
@@ -62,17 +63,21 @@ public class NettyRequestHandler extends ChannelInboundHandlerAdapter {
             final var responseJson = objectMapper.writeValueAsString(response);
             sendResponse(ctx, 200, responseJson);
         } catch (GatewayException e) {
-            final var errorResponse = String.format(
-                    "{\"error\":\"%s\"}",
-                    escapeJson(e.getMessage()));
-            sendResponse(ctx, 500, errorResponse);
+            sendErrorResponse(ctx, 500, e.getMessage());
         } catch (Exception e) {
-            final var errorResponse = String.format(
-                    "{\"error\":\"Internal server error: %s\"}",
-                    escapeJson(e.getMessage()));
-            sendResponse(ctx, 500, errorResponse);
+            sendErrorResponse(ctx, 500, "Internal server error: " + e.getMessage());
         } finally {
             request.release();
+        }
+    }
+
+    private void sendErrorResponse(ChannelHandlerContext ctx, int statusCode, String errorMessage) {
+        try {
+            final var errorResponse = new ErrorResponse(errorMessage);
+            final var responseJson = objectMapper.writeValueAsString(errorResponse);
+            sendResponse(ctx, statusCode, responseJson);
+        } catch (Exception e) {
+            ctx.close();
         }
     }
 
@@ -90,19 +95,8 @@ public class NettyRequestHandler extends ChannelInboundHandlerAdapter {
         ctx.writeAndFlush(response).addListener(future -> ctx.close());
     }
 
-    private String escapeJson(String text) {
-        if (text == null)
-            return "";
-        return text
-                .replace("\\", "\\\\")
-                .replace("\"", "\\\"")
-                .replace("\n", "\\n")
-                .replace("\r", "\\r")
-                .replace("\t", "\\t");
-    }
-
     @Override
-    public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause) throws Exception {
+    public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause) {
         cause.printStackTrace();
         ctx.close();
     }

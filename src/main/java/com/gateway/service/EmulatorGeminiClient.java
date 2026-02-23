@@ -5,7 +5,6 @@ import com.gateway.api.dto.GeminiResponse;
 import com.gateway.api.dto.GeminiResponse.Candidate;
 import com.gateway.api.dto.GeminiResponse.Content;
 import com.gateway.api.dto.GeminiResponse.Part;
-import com.gateway.exception.GatewayException;
 import java.util.List;
 
 /**
@@ -17,7 +16,7 @@ import java.util.List;
 public class EmulatorGeminiClient implements GeminiClient {
 
     @Override
-    public GeminiResponse sendRequest(GeminiRequest request) throws GatewayException {
+    public GeminiResponse sendRequest(GeminiRequest request) {
         // Generate a mock response based on the system instruction and document
         final var mockResponseText = generateMockResponse(request.systemInstruction(), request.document());
 

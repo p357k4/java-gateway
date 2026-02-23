@@ -25,7 +25,7 @@ public class GeminiDocumentProcessor implements DocumentProcessor {
     }
 
     @Override
-    public GeminiResponse process(ProcessRequest request) throws GatewayException {
+    public GeminiResponse process(ProcessRequest request) {
         if (request.document() == null || request.document().isBlank()) {
             throw new GatewayException("Document cannot be empty");
         }

@@ -18,7 +18,7 @@ public class FilePromptProvider implements PromptProvider {
     }
 
     @Override
-    public String getPrompt() throws GatewayException {
+    public String getPrompt() {
         try {
             // Load template on first use, then cache it
             if (cachedTemplate == null) {

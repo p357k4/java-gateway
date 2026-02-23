@@ -2,7 +2,6 @@ package com.gateway.service;
 
 import com.gateway.api.dto.GeminiRequest;
 import com.gateway.api.dto.GeminiResponse;
-import com.gateway.exception.GatewayException;
 
 /**
  * Interface for communicating with the Gemini API
@@ -15,7 +14,6 @@ public interface GeminiClient {
      * @param request the request containing system instruction, document, and model
      *                name
      * @return the response from Gemini API
-     * @throws GatewayException if the API call fails or response is invalid
      */
-    GeminiResponse sendRequest(GeminiRequest request) throws GatewayException;
+    GeminiResponse sendRequest(GeminiRequest request);
 }

@@ -10,7 +10,7 @@ import io.netty.handler.codec.http.HttpServerCodec;
  * Initializes Netty pipeline for HTTP request handling
  */
 public class RequestHandlerInitializer extends ChannelInitializer<SocketChannel> {
-    
+
     private final DocumentProcessor documentProcessor;
 
     public RequestHandlerInitializer(DocumentProcessor documentProcessor) {
@@ -18,15 +18,15 @@ public class RequestHandlerInitializer extends ChannelInitializer<SocketChannel>
     }
 
     @Override
-    protected void initChannel(SocketChannel ch) throws Exception {
+    protected void initChannel(SocketChannel ch) {
         final var pipeline = ch.pipeline();
-        
+
         // HTTP codec for encoding/decoding
         pipeline.addLast(new HttpServerCodec());
-        
+
         // Aggregate full HTTP requests
         pipeline.addLast(new HttpObjectAggregator(65536));
-        
+
         // Custom request handler
         pipeline.addLast(new NettyRequestHandler(documentProcessor));
     }
