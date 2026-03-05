@@ -11,6 +11,7 @@ import io.netty.bootstrap.ServerBootstrap;
 import io.netty.channel.EventLoopGroup;
 import io.netty.channel.nio.NioEventLoopGroup;
 import io.netty.channel.socket.nio.NioServerSocketChannel;
+import io.netty.util.concurrent.DefaultEventExecutorGroup;
 import java.util.logging.Logger;
 import java.util.logging.Level;
 
@@ -36,30 +37,37 @@ public class GatewayApplication {
 
         LOGGER.info(() -> "Starting Gemini Gateway on port " + config.port());
         LOGGER.info(() -> "Prompt file: " + config.promptFilePath());
+        LOGGER.info("Using virtual threads for request handling");
 
         final var promptProvider = new FilePromptProvider(config.promptFilePath());
         final var geminiClient = createGeminiClient(config);
         final var documentProcessor = new GeminiDocumentProcessor(promptProvider, geminiClient);
 
         final var bossGroup = new NioEventLoopGroup(1);
-        final var workerGroup = new NioEventLoopGroup(config.threadPoolSize());
+        final var workerGroup = new NioEventLoopGroup();
+        final var virtualThreadFactory = Thread.ofVirtual().factory();
+        // Use number of CPU cores as the executor group size
+        // Virtual threads are lightweight, so this is just for thread pool scheduling
+        final var virtualThreadEventGroup = new DefaultEventExecutorGroup(
+                Runtime.getRuntime().availableProcessors(),
+                virtualThreadFactory);
 
         try {
             final var future = new ServerBootstrap()
                     .group(bossGroup, workerGroup)
                     .channel(NioServerSocketChannel.class)
-                    .childHandler(new RequestHandlerInitializer(documentProcessor))
+                    .childHandler(new RequestHandlerInitializer(documentProcessor, virtualThreadEventGroup))
                     .bind(config.port())
                     .syncUninterruptibly();
 
-            registerShutdownHook(bossGroup, workerGroup);
+            registerShutdownHook(bossGroup, workerGroup, virtualThreadEventGroup);
 
             LOGGER.info("Server started successfully!");
             LOGGER.info(() -> "POST http://localhost:" + config.port() + "/process");
 
             future.channel().closeFuture().syncUninterruptibly();
         } finally {
-            shutdownEventGroups(bossGroup, workerGroup);
+            shutdownEventGroups(bossGroup, workerGroup, virtualThreadEventGroup);
         }
     }
 
@@ -68,7 +76,6 @@ public class GatewayApplication {
         return new ApplicationConfig(
                 Config.getServerPort(),
                 Config.getPromptFilePath(),
-                Config.getThreadPoolSize(),
                 useEmulator,
                 useEmulator ? null : Config.getGeminiApiKey(),
                 useEmulator ? null : Config.getGeminiApiEndpoint());
@@ -91,17 +98,20 @@ public class GatewayApplication {
         return new HttpGeminiClient(config.apiKey(), config.apiEndpoint());
     }
 
-    private static void registerShutdownHook(EventLoopGroup bossGroup, EventLoopGroup workerGroup) {
+    private static void registerShutdownHook(EventLoopGroup bossGroup, EventLoopGroup workerGroup,
+            DefaultEventExecutorGroup virtualThreadEventGroup) {
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             LOGGER.info("Shutting down server...");
-            shutdownEventGroups(bossGroup, workerGroup);
+            shutdownEventGroups(bossGroup, workerGroup, virtualThreadEventGroup);
             LOGGER.info("Server stopped.");
         }, "ShutdownHook"));
     }
 
-    private static void shutdownEventGroups(EventLoopGroup bossGroup, EventLoopGroup workerGroup) {
+    private static void shutdownEventGroups(EventLoopGroup bossGroup, EventLoopGroup workerGroup,
+            DefaultEventExecutorGroup virtualThreadEventGroup) {
         bossGroup.shutdownGracefully();
         workerGroup.shutdownGracefully();
+        virtualThreadEventGroup.shutdownGracefully();
     }
 
     /**
@@ -110,7 +120,6 @@ public class GatewayApplication {
     private record ApplicationConfig(
             int port,
             String promptFilePath,
-            int threadPoolSize,
             boolean useEmulator,
             String apiKey, // null if using emulator
             String apiEndpoint // null if using emulator

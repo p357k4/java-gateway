@@ -5,7 +5,7 @@ package com.gateway.config;
  * Reads settings from environment variables.
  */
 public class Config {
-    
+
     /**
      * Gemini API key from environment variable GEMINI_API_KEY
      */
@@ -13,9 +13,8 @@ public class Config {
         String apiKey = System.getenv("GEMINI_API_KEY");
         if (apiKey == null || apiKey.isBlank()) {
             throw new IllegalStateException(
-                "GEMINI_API_KEY environment variable not set. " +
-                "Please set it before running the application."
-            );
+                    "GEMINI_API_KEY environment variable not set. " +
+                            "Please set it before running the application.");
         }
         return apiKey;
     }
@@ -48,8 +47,12 @@ public class Config {
     }
 
     /**
-     * Thread pool size for handling concurrent requests
+     * Thread pool size for handling concurrent requests.
+     * 
+     * @deprecated Virtual threads are used instead. This method is no longer
+     *             needed.
      */
+    @Deprecated(since = "1.1.0", forRemoval = true)
     public static int getThreadPoolSize() {
         String size = System.getenv("THREAD_POOL_SIZE");
         try {
@@ -61,7 +64,8 @@ public class Config {
 
     /**
      * Whether to use the Gemini emulator instead of the real API.
-     * Set USE_GEMINI_EMULATOR=true to enable emulator mode (useful for testing without API key).
+     * Set USE_GEMINI_EMULATOR=true to enable emulator mode (useful for testing
+     * without API key).
      * Default: false (uses real API)
      */
     public static boolean useGeminiEmulator() {
