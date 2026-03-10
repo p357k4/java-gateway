@@ -1,11 +1,11 @@
 package com.gateway.processor;
 
-import com.gateway.api.dto.ProcessRequest;
 import com.gateway.api.dto.GeminiRequest;
 import com.gateway.api.dto.GeminiResponse;
+import com.gateway.api.dto.ProcessRequest;
 import com.gateway.exception.GatewayException;
-import com.gateway.service.PromptProvider;
 import com.gateway.service.GeminiClient;
+import com.gateway.service.PromptProvider;
 
 /**
  * Orchestrates document processing workflow:
@@ -27,7 +27,7 @@ public class GeminiDocumentProcessor implements DocumentProcessor {
     @Override
     public GeminiResponse process(ProcessRequest request) {
         if (request.document() == null || request.document().isBlank()) {
-            throw new GatewayException("Document cannot be empty");
+            throw new GatewayException.ValidationException("Document cannot be empty");
         }
 
         // Step 1: Get system instruction template
@@ -40,8 +40,6 @@ public class GeminiDocumentProcessor implements DocumentProcessor {
                 request.modelName());
 
         // Step 3: Send to Gemini API
-        final var response = geminiClient.sendRequest(geminiRequest);
-
-        return response;
+        return geminiClient.sendRequest(geminiRequest);
     }
 }

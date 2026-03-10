@@ -1,36 +1,40 @@
 package com.gateway.service;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
+import com.gateway.api.dto.GeminiApiRequest;
 import com.gateway.api.dto.GeminiRequest;
 import com.gateway.api.dto.GeminiResponse;
 import com.gateway.exception.GatewayException;
+import com.gateway.util.JsonMapper;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.net.URI;
 
 /**
- * HTTP-based client for communicating with Gemini API
+ * HTTP-based client for communicating with Gemini API.
+ *
+ * Uses ObjectMapper for JSON serialization to eliminate manual string building
+ * and ensure proper escaping/encoding. Validates responses and converts errors
+ * to typed exceptions.
  */
 public class HttpGeminiClient implements GeminiClient {
 
     private final String apiKey;
     private final String apiEndpoint;
     private final HttpClient httpClient;
-    private final ObjectMapper objectMapper;
 
     public HttpGeminiClient(String apiKey, String apiEndpoint) {
         this.apiKey = apiKey;
         this.apiEndpoint = apiEndpoint;
         this.httpClient = HttpClient.newHttpClient();
-        this.objectMapper = new ObjectMapper();
     }
 
     @Override
     public GeminiResponse sendRequest(GeminiRequest request) {
         try {
-            // Build Gemini request body
-            final var requestBody = buildRequestBody(request);
+            // Build typed request envelope using DTO (ObjectMapper handles serialization)
+            final var apiRequest = GeminiApiRequest.create(request.systemInstruction(), request.document());
+            final var requestBody = JsonMapper.toJson(apiRequest);
 
             // Create HTTP request
             final var httpRequest = HttpRequest.newBuilder()
@@ -39,54 +43,41 @@ public class HttpGeminiClient implements GeminiClient {
                     .POST(HttpRequest.BodyPublishers.ofString(requestBody))
                     .build();
 
-            // Send request and handle response
+            // Send request and get response
             final var response = httpClient.send(
                     httpRequest,
                     HttpResponse.BodyHandlers.ofString());
 
+            // Check HTTP status
             if (response.statusCode() != 200) {
-                throw new GatewayException(
+                throw new GatewayException.ServiceException(
                         "Gemini API returned status " + response.statusCode() + ": " + response.body());
             }
 
-            // Parse response
-            final var geminiResponse = objectMapper.readValue(
-                    response.body(),
-                    GeminiResponse.class);
+            // Deserialize and validate response
+            return validateResponse(response.body());
 
-            // Validate response
-            if (geminiResponse.candidates() == null || geminiResponse.candidates().isEmpty()) {
-                throw new GatewayException("Gemini API returned no candidates in response");
-            }
-
-            return geminiResponse;
         } catch (GatewayException e) {
             throw e;
         } catch (Exception e) {
-            throw new GatewayException("Failed to call Gemini API: " + e.getMessage(), e);
+            throw new GatewayException.ServiceException("Failed to call Gemini API: " + e.getMessage(), e);
         }
     }
 
     /**
-     * Builds the JSON request body for Gemini API
+     * Validates the Gemini API response structure
+     *
+     * @param responseBody JSON string from the API
+     * @return parsed and validated GeminiResponse
+     * @throws GatewayException.ServiceException if response is invalid or empty
      */
-    private String buildRequestBody(GeminiRequest request) {
-        final var jsonRequest = String.format(
-                "{\"systemInstruction\":{\"parts\":[{\"text\":\"%s\"}]},\"contents\":[{\"role\":\"user\",\"parts\":[{\"text\":\"%s\"}]}]}",
-                escapeJson(request.systemInstruction()),
-                escapeJson(request.document()));
-        return jsonRequest;
-    }
+    private GeminiResponse validateResponse(String responseBody) {
+        final var geminiResponse = JsonMapper.fromJson(responseBody, GeminiResponse.class);
 
-    /**
-     * Escapes special characters for JSON
-     */
-    private String escapeJson(String text) {
-        return text
-                .replace("\\", "\\\\")
-                .replace("\"", "\\\"")
-                .replace("\n", "\\n")
-                .replace("\r", "\\r")
-                .replace("\t", "\\t");
+        if (geminiResponse.candidates() == null || geminiResponse.candidates().isEmpty()) {
+            throw new GatewayException.ServiceException("Gemini API returned no candidates in response");
+        }
+
+        return geminiResponse;
     }
 }
