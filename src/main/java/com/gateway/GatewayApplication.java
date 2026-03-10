@@ -54,6 +54,8 @@ public class GatewayApplication {
         final var documentProcessor = new GeminiDocumentProcessor(promptProvider, geminiClient);
 
         // Initialize Netty infrastructure
+        // NioEventLoopGroup provides non-blocking I/O transport with optimal thread
+        // management
         final var bossGroup = new NioEventLoopGroup(NETTY_BOSS_THREADS);
         final var workerGroup = new NioEventLoopGroup();
         final var virtualThreadEventGroup = createVirtualThreadEventGroup();

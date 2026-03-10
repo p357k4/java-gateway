@@ -37,8 +37,12 @@ public class RequestHandlerInitializer extends ChannelInitializer<SocketChannel>
         pipeline.addLast(new HttpObjectAggregator(65536));
 
         // Custom request handler runs on virtual thread executor for blocking
-        // operations
-        // Receives CPU worker pool for offloading expensive computations
+        // operations.
+        // Netty 4.2 native approach: EventExecutorGroup binding enables handler
+        // execution
+        // on virtualThreadEventGroup while I/O operations remain on the NIO event loop.
+        // This is the standard pattern for offloading blocking operations in Netty
+        // 4.2+.
         pipeline.addLast(virtualThreadEventGroup, new NettyRequestHandler(documentProcessor, cpuWorkerPool));
     }
 }
