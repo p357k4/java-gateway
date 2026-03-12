@@ -4,12 +4,10 @@ import com.gateway.api.dto.GeminiResponse;
 import com.gateway.util.JsonMapper;
 import io.netty.buffer.Unpooled;
 import io.netty.channel.ChannelHandlerContext;
-import io.netty.channel.ChannelInboundHandlerAdapter;
 import io.netty.handler.codec.http.*;
 import io.netty.util.CharsetUtil;
 import java.util.Map;
 import java.util.logging.Level;
-import java.util.logging.Logger;
 
 /**
  * Encodes successful processing results as a JSON HTTP response.
@@ -18,9 +16,7 @@ import java.util.logging.Logger;
  * Extracts text from the Gemini API response and formats it as JSON,
  * then writes the HTTP response to the client.
  */
-public class ResponseEncodingHandler extends ChannelInboundHandlerAdapter {
-
-    private static final Logger LOGGER = Logger.getLogger(ResponseEncodingHandler.class.getName());
+public class ResponseEncodingHandler extends AbstractPipelineHandler {
 
     @Override
     public void channelRead(ChannelHandlerContext ctx, Object msg) {
@@ -29,7 +25,7 @@ public class ResponseEncodingHandler extends ChannelInboundHandlerAdapter {
 
             // If we have a response from document processing, encode it as JSON
             if (response != null) {
-                String text = extractText(response);
+                String text = response.firstText().orElse("No content");
                 sendSuccessResponse(ctx, text);
                 return;
             }
@@ -38,7 +34,7 @@ public class ResponseEncodingHandler extends ChannelInboundHandlerAdapter {
             ctx.fireChannelRead(msg);
 
         } catch (Exception e) {
-            LOGGER.log(Level.SEVERE, "Response encoding failed", e);
+            logger.log(Level.SEVERE, "Response encoding failed", e);
             sendErrorResponse(ctx, 500, "Failed to encode response");
         }
     }
@@ -56,25 +52,6 @@ public class ResponseEncodingHandler extends ChannelInboundHandlerAdapter {
     }
 
     /**
-     * Extract text content from Gemini API response
-     */
-    private String extractText(GeminiResponse response) {
-        var candidates = response.candidates();
-        if (candidates == null || candidates.isEmpty()) {
-            return "No content";
-        }
-
-        var content = candidates.get(0).content();
-        var parts = (content != null) ? content.parts() : null;
-        if (parts == null || parts.isEmpty()) {
-            return "No content";
-        }
-
-        var text = parts.get(0).text();
-        return (text != null && !text.isEmpty()) ? text : "No content";
-    }
-
-    /**
      * Send successful response as JSON
      */
     private void sendSuccessResponse(ChannelHandlerContext ctx, String content) {
@@ -82,7 +59,7 @@ public class ResponseEncodingHandler extends ChannelInboundHandlerAdapter {
             String json = JsonMapper.toJson(Map.of("response", content));
             sendResponse(ctx, 200, json);
         } catch (Exception e) {
-            LOGGER.log(Level.SEVERE, "Failed to encode success response", e);
+            logger.log(Level.SEVERE, "Failed to encode success response", e);
             sendErrorResponse(ctx, 500, "Internal error");
         }
     }
@@ -95,7 +72,7 @@ public class ResponseEncodingHandler extends ChannelInboundHandlerAdapter {
             String json = JsonMapper.toJson(Map.of("error", message));
             sendResponse(ctx, code, json);
         } catch (Exception e) {
-            LOGGER.log(Level.SEVERE, "Failed to encode error response", e);
+            logger.log(Level.SEVERE, "Failed to encode error response", e);
             ctx.close();
         }
     }
@@ -118,14 +95,8 @@ public class ResponseEncodingHandler extends ChannelInboundHandlerAdapter {
 
             ctx.writeAndFlush(response).addListener(f -> ctx.close());
         } catch (Exception e) {
-            LOGGER.log(Level.SEVERE, "Failed to send response", e);
+            logger.log(Level.SEVERE, "Failed to send response", e);
             ctx.close();
         }
-    }
-
-    @Override
-    public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause) {
-        LOGGER.log(Level.SEVERE, "Response encoding exception", cause);
-        sendErrorResponse(ctx, 500, "Server error");
     }
 }

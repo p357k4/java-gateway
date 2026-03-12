@@ -4,27 +4,27 @@ import com.gateway.api.dto.ProcessRequest;
 import com.gateway.api.dto.GeminiResponse;
 import com.gateway.processor.DocumentProcessor;
 import io.netty.channel.ChannelHandlerContext;
-import io.netty.channel.ChannelInboundHandlerAdapter;
+import java.util.concurrent.Executor;
 import java.util.logging.Level;
-import java.util.logging.Logger;
 
 /**
  * Processes the validated request via the DocumentProcessor.
  *
- * Calls the Gemini API client (via DocumentProcessor) and stores the response
- * in the channel context for downstream handlers.
- *
- * This handler should be bound to the virtual thread executor group to allow
- * blocking I/O operations without blocking the NIO event loop.
+ * Delegates blocking I/O operations (Gemini API calls) to a virtual thread
+ * executor,
+ * keeping the NIO event loop free for concurrent request handling. In Netty
+ * 4.2+,
+ * handlers manage their own executors rather than relying on deprecated
+ * EventExecutorGroup binding.
  */
-public class DocumentProcessingHandler extends ChannelInboundHandlerAdapter {
-
-    private static final Logger LOGGER = Logger.getLogger(DocumentProcessingHandler.class.getName());
+public class DocumentProcessingHandler extends AbstractPipelineHandler {
 
     private final DocumentProcessor documentProcessor;
+    private final Executor blockingExecutor;
 
-    public DocumentProcessingHandler(DocumentProcessor documentProcessor) {
+    public DocumentProcessingHandler(DocumentProcessor documentProcessor, Executor blockingExecutor) {
         this.documentProcessor = documentProcessor;
+        this.blockingExecutor = blockingExecutor;
     }
 
     @Override
@@ -37,6 +37,16 @@ public class DocumentProcessingHandler extends ChannelInboundHandlerAdapter {
             return;
         }
 
+        // Schedule blocking operation on virtual thread executor (Netty 4.2+ pattern:
+        // handlers manage their own executors for blocking work)
+        blockingExecutor.execute(() -> processBlockingOperation(ctx, request, msg));
+    }
+
+    /**
+     * Perform the blocking Gemini API call on the virtual thread executor.
+     * This keeps the NIO event loop free for concurrent request handling.
+     */
+    private void processBlockingOperation(ChannelHandlerContext ctx, ProcessRequest request, Object msg) {
         try {
             // Process the document via Gemini API
             GeminiResponse response = documentProcessor.process(request);
@@ -44,22 +54,13 @@ public class DocumentProcessingHandler extends ChannelInboundHandlerAdapter {
             // Store response in channel context
             ctx.channel().attr(PipelineAttributes.GEMINI_RESPONSE).set(response);
 
-            // Fire forward to next handler
-            ctx.fireChannelRead(msg);
+            // Fire forward to next handler (on NIO event loop)
+            ctx.executor().execute(() -> ctx.fireChannelRead(msg));
 
         } catch (Exception e) {
-            LOGGER.log(Level.SEVERE, "Document processing failed", e);
-            respondWithError(ctx, 500, e.getMessage());
+            logger.log(Level.SEVERE, "Document processing failed", e);
+            // Fire error back on NIO event loop
+            ctx.executor().execute(() -> respondWithError(ctx, 500, e.getMessage()));
         }
-    }
-
-    private void respondWithError(ChannelHandlerContext ctx, int code, String msg) {
-        ctx.fireUserEventTriggered(new ErrorResponse(code, msg));
-    }
-
-    @Override
-    public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause) {
-        LOGGER.log(Level.SEVERE, "Processing exception", cause);
-        respondWithError(ctx, 500, "Server error");
     }
 }

@@ -6,7 +6,7 @@ import io.netty.channel.ChannelInitializer;
 import io.netty.channel.socket.SocketChannel;
 import io.netty.handler.codec.http.HttpObjectAggregator;
 import io.netty.handler.codec.http.HttpServerCodec;
-import io.netty.util.concurrent.EventExecutorGroup;
+import java.util.concurrent.Executor;
 
 /**
  * Initializes Netty pipeline for HTTP request handling.
@@ -26,11 +26,11 @@ import io.netty.util.concurrent.EventExecutorGroup;
 public class RequestHandlerInitializer extends ChannelInitializer<SocketChannel> {
 
     private final DocumentProcessor documentProcessor;
-    private final EventExecutorGroup virtualThreadEventGroup;
+    private final Executor blockingExecutor;
 
-    public RequestHandlerInitializer(DocumentProcessor documentProcessor, EventExecutorGroup virtualThreadEventGroup) {
+    public RequestHandlerInitializer(DocumentProcessor documentProcessor, Executor blockingExecutor) {
         this.documentProcessor = documentProcessor;
-        this.virtualThreadEventGroup = virtualThreadEventGroup;
+        this.blockingExecutor = blockingExecutor;
     }
 
     @Override
@@ -51,8 +51,12 @@ public class RequestHandlerInitializer extends ChannelInitializer<SocketChannel>
         // Request validator - check document presence and size (NIO thread)
         pipeline.addLast(new RequestValidationHandler());
 
-        // Document processor - call Gemini API (virtual thread, blocking)
-        pipeline.addLast(virtualThreadEventGroup, new DocumentProcessingHandler(documentProcessor));
+        // Document processor - call Gemini API (delegates blocking I/O to virtual
+        // thread executor)
+        // Netty 4.2+ pattern: handlers manage their own executors for blocking
+        // operations
+        // instead of relying on deprecated EventExecutorGroup binding
+        pipeline.addLast(new DocumentProcessingHandler(documentProcessor, blockingExecutor));
 
         // Response encoder - format response as JSON HTTP (NIO thread)
         pipeline.addLast(new ResponseEncodingHandler());

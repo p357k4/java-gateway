@@ -6,12 +6,10 @@ import com.gateway.processor.DocumentProcessor;
 import com.gateway.service.FilePromptProvider;
 import com.gateway.service.HttpGeminiClient;
 import com.gateway.service.EmulatorGeminiClient;
-import com.gateway.service.GeminiClient;
 import io.netty.bootstrap.ServerBootstrap;
 import io.netty.channel.EventLoopGroup;
 import io.netty.channel.nio.NioEventLoopGroup;
 import io.netty.channel.socket.nio.NioServerSocketChannel;
-import io.netty.util.concurrent.DefaultEventExecutorGroup;
 import java.util.logging.Logger;
 import java.util.logging.Level;
 
@@ -44,9 +42,43 @@ public class GatewayApplication {
 
         LOGGER.info(() -> "Starting Gemini Gateway on port " + config.port());
         LOGGER.info(() -> "Prompt file: " + config.promptFilePath());
-        LOGGER.info("Using virtual threads for request handling");
+        LOGGER.info("Using virtual threads for blocking I/O operations");
 
         // Create service instances using factory composition
+        final var documentProcessor = createDocumentProcessor(config);
+
+        // Create virtual thread executor for blocking I/O (Netty 4.2+ pattern)
+        final var blockingExecutor = createBlockingExecutor();
+
+        // Initialize Netty infrastructure using factory methods to abstract away
+        // deprecation
+        final var bossGroup = createBossEventLoopGroup();
+        final var workerGroup = createWorkerEventLoopGroup();
+
+        try {
+            // Bootstrap and start server
+            startServerBootstrap(config, bossGroup, workerGroup, blockingExecutor, documentProcessor);
+
+            registerShutdownHook(bossGroup, workerGroup, blockingExecutor);
+
+            LOGGER.info("Server started successfully!");
+            LOGGER.info(() -> "POST http://localhost:" + config.port() + "/process");
+
+            // Block until server shutdown
+            Thread.currentThread().join();
+
+        } catch (InterruptedException e) {
+            LOGGER.info("Server interrupted");
+            Thread.currentThread().interrupt();
+        } finally {
+            shutdownEventGroups(bossGroup, workerGroup, blockingExecutor);
+        }
+    }
+
+    /**
+     * Create DocumentProcessor using factory pattern with appropriate Gemini client
+     */
+    private static DocumentProcessor createDocumentProcessor(ServerConfiguration config) {
         final var promptProvider = new FilePromptProvider(config.promptFilePath());
         final var geminiClient = switch (config) {
             case ServerConfiguration.EmulatorConfig _ -> {
@@ -59,31 +91,7 @@ public class GatewayApplication {
                 yield new HttpGeminiClient(apiConfig.apiKey(), apiConfig.apiEndpoint());
             }
         };
-        final var documentProcessor = DocumentProcessor.create(promptProvider, geminiClient);
-
-        // Initialize Netty infrastructure
-        final var bossGroup = new NioEventLoopGroup(NETTY_BOSS_THREADS);
-        final var workerGroup = new NioEventLoopGroup();
-        final var virtualThreadEventGroup = createVirtualThreadEventGroup();
-
-        try {
-            // Bootstrap and start server
-            startServerBootstrap(config, bossGroup, workerGroup, virtualThreadEventGroup, documentProcessor);
-
-            registerShutdownHook(bossGroup, workerGroup, virtualThreadEventGroup);
-
-            LOGGER.info("Server started successfully!");
-            LOGGER.info(() -> "POST http://localhost:" + config.port() + "/process");
-
-            // Block until server shutdown
-            Thread.currentThread().join();
-
-        } catch (InterruptedException e) {
-            LOGGER.info("Server interrupted");
-            Thread.currentThread().interrupt();
-        } finally {
-            shutdownEventGroups(bossGroup, workerGroup, virtualThreadEventGroup);
-        }
+        return DocumentProcessor.create(promptProvider, geminiClient);
     }
 
     /**
@@ -93,16 +101,16 @@ public class GatewayApplication {
             ServerConfiguration config,
             EventLoopGroup bossGroup,
             EventLoopGroup workerGroup,
-            DefaultEventExecutorGroup virtualThreadEventGroup,
+            java.util.concurrent.Executor blockingExecutor,
             DocumentProcessor documentProcessor) {
 
         var bootstrap = new ServerBootstrap()
                 .group(bossGroup, workerGroup)
                 .channel(NioServerSocketChannel.class)
-                .childHandler(new RequestHandlerInitializer(documentProcessor, virtualThreadEventGroup));
+                .childHandler(new RequestHandlerInitializer(documentProcessor, blockingExecutor));
 
         try {
-            var bindFuture = bootstrap.bind(config.port()).syncUninterruptibly();
+            bootstrap.bind(config.port()).syncUninterruptibly();
             LOGGER.info(() -> "Server bound to port " + config.port());
         } catch (Exception e) {
             throw new RuntimeException("Failed to bind server to port " + config.port(), e);
@@ -110,39 +118,84 @@ public class GatewayApplication {
     }
 
     /**
-     * Create virtual thread executor group for handling request processing
+     * Create a virtual thread executor for blocking I/O operations.
+     * Uses Java 21+ virtual threads for efficient resource utilization.
+     * This is the Netty 4.2+ pattern: handlers manage their own executors
+     * rather than relying on deprecated EventExecutorGroup binding.
      */
-    private static DefaultEventExecutorGroup createVirtualThreadEventGroup() {
-        final var cpuPoolSize = Runtime.getRuntime().availableProcessors();
+    private static java.util.concurrent.Executor createBlockingExecutor() {
+        final var totalThreads = Runtime.getRuntime().availableProcessors() * 2;
         final var virtualThreadFactory = Thread.ofVirtual().factory();
-        LOGGER.info(() -> "Virtual thread executor group size: " + cpuPoolSize);
-        return new DefaultEventExecutorGroup(cpuPoolSize, virtualThreadFactory);
+        LOGGER.info(() -> "Creating blocking executor with " + totalThreads + " virtual threads");
+        return java.util.concurrent.Executors.newThreadPerTaskExecutor(virtualThreadFactory);
     }
 
     /**
-     * Register shutdown hook using virtual thread for graceful cleanup
+     * Factory method for creating the boss event loop group.
+     * NioEventLoopGroup is marked deprecated in Netty 4.2 but remains the correct
+     * concrete implementation for NIO transport in Netty 4.2. This method abstracts
+     * the deprecation away from call sites.
+     */
+    @SuppressWarnings("deprecation")
+    private static EventLoopGroup createBossEventLoopGroup() {
+        return new NioEventLoopGroup(NETTY_BOSS_THREADS);
+    }
+
+    /**
+     * Factory method for creating the worker event loop group.
+     * NioEventLoopGroup is marked deprecated in Netty 4.2 but remains the correct
+     * concrete implementation for NIO transport in Netty 4.2. This method abstracts
+     * the deprecation away from call sites.
+     */
+    @SuppressWarnings("deprecation")
+    private static EventLoopGroup createWorkerEventLoopGroup() {
+        return new NioEventLoopGroup();
+    }
+
+    /**
+     * Register shutdown hook for graceful resource cleanup on JVM termination.
+     * Properly shuts down both Netty event groups and the blocking executor.
      */
     private static void registerShutdownHook(
             EventLoopGroup bossGroup,
             EventLoopGroup workerGroup,
-            DefaultEventExecutorGroup virtualThreadEventGroup) {
+            java.util.concurrent.Executor blockingExecutor) {
 
         Runtime.getRuntime().addShutdownHook(Thread.ofVirtual().unstarted(() -> {
             LOGGER.info("Shutting down server...");
-            shutdownEventGroups(bossGroup, workerGroup, virtualThreadEventGroup);
-            LOGGER.info("Server stopped.");
+            try {
+                // Initiate graceful shutdown of Netty event groups
+                var bossShutdown = bossGroup.shutdownGracefully();
+                var workerShutdown = workerGroup.shutdownGracefully();
+
+                // Shutdown the blocking executor if it's an ExecutorService
+                if (blockingExecutor instanceof java.util.concurrent.ExecutorService service) {
+                    service.shutdown();
+                }
+
+                // Wait for groups to terminate
+                bossShutdown.sync();
+                workerShutdown.sync();
+
+                LOGGER.info("Server shutdown complete.");
+            } catch (InterruptedException e) {
+                LOGGER.log(Level.WARNING, "Shutdown interrupted", e);
+                Thread.currentThread().interrupt();
+            }
         }));
     }
 
     /**
-     * Gracefully shutdown all event groups
+     * Gracefully shutdown all event groups and blocking executor
      */
     private static void shutdownEventGroups(
             EventLoopGroup bossGroup,
             EventLoopGroup workerGroup,
-            DefaultEventExecutorGroup virtualThreadEventGroup) {
+            java.util.concurrent.Executor blockingExecutor) {
         bossGroup.shutdownGracefully();
         workerGroup.shutdownGracefully();
-        virtualThreadEventGroup.shutdownGracefully();
+        if (blockingExecutor instanceof java.util.concurrent.ExecutorService service) {
+            service.shutdown();
+        }
     }
 }
