@@ -1,18 +1,23 @@
 package com.gateway.processor;
 
 import com.gateway.api.dto.ProcessRequest;
+import com.gateway.api.dto.GeminiRequest;
 import com.gateway.api.dto.GeminiResponse;
+import com.gateway.service.GeminiClient;
+import com.gateway.service.PromptProvider;
 
 /**
- * Interface for processing documents with Gemini
+ * Processes documents with Gemini API
  */
+@FunctionalInterface
 public interface DocumentProcessor {
+    GeminiResponse process(ProcessRequest request);
 
     /**
-     * Process a document: read prompt, inject document, send to Gemini
-     *
-     * @param request the process request containing the document
-     * @return the response from Gemini API
+     * Create processor by composing dependencies
      */
-    GeminiResponse process(ProcessRequest request);
+    static DocumentProcessor create(PromptProvider prompt, GeminiClient client) {
+        return request -> client.sendRequest(
+                new GeminiRequest(prompt.getPrompt(), request.document(), request.modelName()));
+    }
 }
